@@ -1,0 +1,1768 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+
+local COLOR_BG = Color3.fromRGB(0, 0, 0)
+local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)
+local COLOR_YELLOW_DARK = Color3.fromRGB(180, 180, 0)
+local COLOR_YELLOW_LIGHT = Color3.fromRGB(255, 255, 150)
+local COLOR_WHITE = Color3.fromRGB(255, 255, 255)
+
+
+local fps = 0
+local ping = 0
+
+
+local Packages = ReplicatedStorage:WaitForChild("Packages")
+local Net = require(Packages.Net)
+local UseItemRemote = Net:RemoteEvent("UseItem")
+local KeybindManager = {
+    keybinds = {
+        BatAimbot = Enum.KeyCode.Z,
+        PaintballSpam = Enum.KeyCode.X,
+        HighestESP = Enum.KeyCode.C,
+        Helicopter = Enum.KeyCode.H,
+        ESP = Enum.KeyCode.E,
+        AutoSteal = Enum.KeyCode.V,
+        Medusa = Enum.KeyCode.M,
+        SpinBot = Enum.KeyCode.S,
+        AntiRagdoll = Enum.KeyCode.R,
+        Optimizer = Enum.KeyCode.O,
+        XRay = Enum.KeyCode.K,
+        AntiBeeDisc = Enum.KeyCode.B,
+        PlayerFollower = Enum.KeyCode.L,
+        StealingSpeed = Enum.KeyCode.T,
+    }
+}
+
+getgenv().SetKeybind = function(featureName, keyCode)
+    if KeybindManager.keybinds[featureName] then
+        KeybindManager.keybinds[featureName] = keyCode
+    end
+end
+
+local clickSound = Instance.new("Sound")
+clickSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+clickSound.Volume = 0.4
+clickSound.Parent = SoundService
+
+
+local AnimalsData = require(ReplicatedStorage.Datas:WaitForChild("Animals"))
+local AnimalsShared = require(ReplicatedStorage.Shared:WaitForChild("Animals"))
+local NumberUtils = require(ReplicatedStorage.Utils:WaitForChild("NumberUtils"))
+local highestEspGui = nil
+local highestEspAnimals = {}
+local highestEspCurrentBest = nil
+local highestEspESP = nil
+-- highestEspUpdateConnection moved to State table
+local highestEspSynchronizerInternal = {
+    _cache = {},
+    _dataTable = nil
+}
+
+local DataStore = {
+    Speed = 28.5,
+    Gravity = 196.2,
+    JumpPower = 50,
+    HelicopterSpeed = 0,
+    Keybinds = {}
+}
+local function toggleSwitch(switchData, active)
+    if active then
+        TweenService:Create(switchData.toggle, TweenInfo.new(0.3), {
+            Position = UDim2.new(1, -23, 0, 2),
+            BackgroundColor3 = COLOR_YELLOW
+        }):Play()
+        TweenService:Create(switchData.switchCont, TweenInfo.new(0.3), {
+            BackgroundColor3 = COLOR_YELLOW_DARK
+        }):Play()
+    else
+        TweenService:Create(switchData.toggle, TweenInfo.new(0.3), {
+            Position = UDim2.new(0, 2, 0, 2),
+            BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        }):Play()
+        TweenService:Create(switchData.switchCont, TweenInfo.new(0.3), {
+            BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        }):Play()
+    end
+end
+
+local function saveSettings()
+    if writefile and readfile then
+        
+        local keybindsCopy = {}
+        for name, key in pairs(KeybindManager.keybinds) do
+            keybindsCopy[name] = tostring(key):gsub("Enum.KeyCode.", "")
+        end
+        DataStore.Keybinds = keybindsCopy
+        
+        local success, err = pcall(function()
+            writefile("LIMITED_HUB_SETTINGS.txt", game:GetService("HttpService"):JSONEncode(DataStore))
+        end)
+        if not success then
+            warn("Failed to save settings:", err)
+        end
+    end
+end
+
+local function loadSettings()
+    if readfile and isfile and isfile("LIMITED_HUB_SETTINGS.txt") then
+        local success, data = pcall(function()
+            return game:GetService("HttpService"):JSONDecode(readfile("LIMITED_HUB_SETTINGS.txt"))
+        end)
+        if success and data then
+            DataStore = data
+            
+           
+            if DataStore.Keybinds then
+                for name, keyString in pairs(DataStore.Keybinds) do
+                    if type(keyString) == "string" then
+                        local keyCode = Enum.KeyCode[keyString]
+                        if keyCode then
+                            KeybindManager.keybinds[name] = keyCode
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Load settings on start
+loadSettings()
+
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "LIMITED_HUB_GUI"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+
+local UserInputService = game:GetService("UserInputService")
+do
+    local isMobile_tmp = UserInputService:GetLastInputType() == Enum.UserInputType.Touch or game:GetService("RunService"):IsStudio() == false and game:GetService("GuiService"):IsTenFootInterface()
+    -- FIXED: Proper mobile sizing - much smaller for mobile devices
+    local guiWidth_tmp = isMobile_tmp and 280 or 640
+    local guiHeight_tmp = isMobile_tmp and 380 or 650
+    getgenv()._GUI_WIDTH = guiWidth_tmp
+    getgenv()._GUI_HEIGHT = guiHeight_tmp
+    getgenv()._IS_MOBILE = isMobile_tmp
+end
+local isMobile = getgenv()._IS_MOBILE
+local guiWidth = getgenv()._GUI_WIDTH
+local guiHeight = getgenv()._GUI_HEIGHT
+
+-- Container for all GUI elements (for dragging)
+local mainContainer = Instance.new("Frame")
+mainContainer.Size = UDim2.new(0, guiWidth, 0, guiHeight)
+mainContainer.Position = UDim2.new(0.5, -guiWidth/2, 0.5, -guiHeight/2)
+mainContainer.BackgroundTransparency = 1
+mainContainer.Parent = gui
+
+-- ADDED: Dragging functionality
+local function makeDraggable(frame)
+    local dragging = false
+    local dragInput
+    local dragStart
+    local startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+end
+
+-- Apply dragging to main container
+makeDraggable(mainContainer)
+
+task.spawn(function()
+    local lastTick = tick()
+    local frameCount = 0
+    RunService.RenderStepped:Connect(function()
+        frameCount = frameCount + 1
+        local currentTick = tick()
+        if currentTick - lastTick >= 1 then
+            fps = frameCount
+            frameCount = 0
+            lastTick = currentTick
+        end
+    end)
+end)
+
+-- Ping Counter
+task.spawn(function()
+    while true do
+        ping = math.floor(player:GetNetworkPing() * 1000)
+        task.wait(1)
+    end
+end)
+
+-- Notification Function
+local function showNotification(message)
+    local notification = Instance.new("Frame")
+    notification.Size = UDim2.new(0, 300, 0, 60)
+    notification.Position = UDim2.new(0.5, -150, 0, -70)
+    notification.BackgroundColor3 = COLOR_BG
+    notification.BackgroundTransparency = 0.1
+    notification.BorderSizePixel = 0
+    notification.Parent = gui
+    
+    local notifCorner = Instance.new("UICorner")
+notifCorner.CornerRadius = UDim.new(0, 10)
+    notifCorner.Parent = notification
+    
+    local notifOutline = Instance.new("UIStroke")
+    notifOutline.Color = COLOR_YELLOW
+    notifOutline.Thickness = 3
+    notifOutline.Parent = notification
+    
+    local notifText = Instance.new("TextLabel")
+    notifText.Size = UDim2.new(1, -20, 1, 0)
+    notifText.Position = UDim2.new(0, 10, 0, 0)
+    notifText.BackgroundTransparency = 1
+    notifText.Text = message
+    notifText.Font = Enum.Font.GothamBold
+    notifText.TextSize = 16
+    notifText.TextColor3 = COLOR_YELLOW_LIGHT
+    notifText.TextWrapped = true
+    notifText.Parent = notification
+    
+    -- Animate in
+    notification:TweenPosition(UDim2.new(0.5, -150, 0, 20), Enum.EasingDirection.Out, Enum.EasingStyle.Back, 0.5, true)
+    
+    -- Wait and animate out
+    task.wait(3)
+    notification:TweenPosition(UDim2.new(0.5, -150, 0, -70), Enum.EasingDirection.In, Enum.EasingStyle.Back, 0.5, true)
+    task.wait(0.5)
+    notification:Destroy()
+end
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(1, 0, 1, 0)
+mainFrame.Position = UDim2.new(0, 0, 0, 0)
+mainFrame.BackgroundColor3 = COLOR_BG
+mainFrame.BackgroundTransparency = 0.15
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = mainContainer
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 15)
+mainCorner.Parent = mainFrame
+
+local mainOutline = Instance.new("UIStroke")
+mainOutline.Color = COLOR_YELLOW
+mainOutline.Thickness = 3
+mainOutline.Parent = mainFrame
+
+-- Header
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 50)
+header.BackgroundColor3 = COLOR_BG
+header.BackgroundTransparency = 0.05
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 15)
+headerCorner.Parent = header
+
+local headerLine = Instance.new("Frame")
+headerLine.Size = UDim2.new(1, 0, 0, 15)
+headerLine.Position = UDim2.new(0, 0, 1, -15)
+headerLine.BackgroundColor3 = COLOR_BG
+headerLine.BackgroundTransparency = 0.05
+headerLine.BorderSizePixel = 0
+headerLine.Parent = header
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(0, 250, 1, 0)
+titleText.Position = UDim2.new(0, 15, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "🎮 LIMITED HUB"
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = isMobile and 18 or 24
+titleText.TextColor3 = COLOR_YELLOW
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = header
+
+local infoText = Instance.new("TextLabel")
+infoText.Size = UDim2.new(0, 150, 1, 0)
+infoText.Position = UDim2.new(1, -165, 0, 0)
+infoText.BackgroundTransparency = 1
+infoText.Text = "FPS: 0 | PING: 0"
+infoText.Font = Enum.Font.Gotham
+infoText.TextSize = isMobile and 10 or 12
+infoText.TextColor3 = COLOR_WHITE
+infoText.TextXAlignment = Enum.TextXAlignment.Right
+infoText.Parent = header
+
+task.spawn(function()
+    while true do
+        infoText.Text = string.format("FPS: %d | PING: %d", fps, ping)
+        task.wait(0.5)
+    end
+end)
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 35, 0, 35)
+closeButton.Position = UDim2.new(1, -45, 0, 7.5)
+closeButton.BackgroundColor3 = COLOR_BG
+closeButton.BackgroundTransparency = 0.2
+closeButton.Text = "✕"
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = isMobile and 16 or 20
+closeButton.TextColor3 = COLOR_YELLOW
+closeButton.BorderSizePixel = 0
+closeButton.Parent = header
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 8)
+closeCorner.Parent = closeButton
+
+local closeStroke = Instance.new("UIStroke")
+closeStroke.Color = COLOR_YELLOW
+closeStroke.Thickness = 2
+closeStroke.Parent = closeButton
+
+closeButton.MouseButton1Click:Connect(function()
+    clickSound:Play()
+    gui:Destroy()
+end)
+
+-- Tab Buttons Container
+local tabContainer = Instance.new("Frame")
+tabContainer.Size = UDim2.new(1, -30, 0, 45)
+tabContainer.Position = UDim2.new(0, 15, 0, 65)
+tabContainer.BackgroundTransparency = 1
+tabContainer.Parent = mainFrame
+
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.Padding = UDim.new(0, 8)
+tabLayout.Parent = tabContainer
+
+local contentFrame = Instance.new("ScrollingFrame")
+contentFrame.Size = UDim2.new(1, -30, 1, -130)
+contentFrame.Position = UDim2.new(0, 15, 0, 115)
+contentFrame.BackgroundTransparency = 1
+contentFrame.BorderSizePixel = 0
+contentFrame.ScrollBarThickness = 6
+contentFrame.ScrollBarImageColor3 = COLOR_YELLOW
+contentFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+contentFrame.Parent = mainFrame
+
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Padding = UDim.new(0, 12)
+contentLayout.Parent = contentFrame
+
+contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    contentFrame.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 20)
+end)
+
+local currentTab = nil
+local tabs = {}
+
+local function createTab(name, icon, layoutOrder)
+    local tabButton = Instance.new("TextButton")
+    tabButton.Size = UDim2.new(0, isMobile and 80 or 130, 1, 0)
+    tabButton.BackgroundColor3 = COLOR_BG
+    tabButton.BackgroundTransparency = 0.3
+    tabButton.Text = icon .. " " .. name
+    tabButton.Font = Enum.Font.GothamBold
+    tabButton.TextSize = isMobile and 11 or 14
+    tabButton.TextColor3 = COLOR_WHITE
+    tabButton.BorderSizePixel = 0
+    tabButton.LayoutOrder = layoutOrder
+    tabButton.Parent = tabContainer
+
+    local tabCorner = Instance.new("UICorner")
+    tabCorner.CornerRadius = UDim.new(0, 8)
+    tabCorner.Parent = tabButton
+
+    local tabStroke = Instance.new("UIStroke")
+    tabStroke.Color = COLOR_YELLOW_DARK
+    tabStroke.Thickness = 2
+    tabStroke.Transparency = 0.7
+    tabStroke.Parent = tabButton
+
+    tabs[name] = {
+        button = tabButton,
+        stroke = tabStroke,
+        elements = {}
+    }
+
+    tabButton.MouseButton1Click:Connect(function()
+        clickSound:Play()
+        
+        for tabName, tabData in pairs(tabs) do
+            for _, element in ipairs(tabData.elements) do
+                element.Visible = false
+            end
+            tabData.button.BackgroundTransparency = 0.3
+            tabData.stroke.Transparency = 0.7
+            tabData.button.TextColor3 = COLOR_WHITE
+        end
+        
+        for _, element in ipairs(tabs[name].elements) do
+            element.Visible = true
+        end
+        tabs[name].button.BackgroundTransparency = 0.1
+        tabs[name].stroke.Transparency = 0.3
+        tabs[name].button.TextColor3 = COLOR_YELLOW
+        currentTab = name
+    end)
+
+    return tabButton
+end
+
+createTab("Main", "⚡", 1)
+createTab("Player", "👤", 2)
+createTab("Visual", "👁", 3)
+createTab("Misc", "⚙", 4)
+createTab("Settings", "🔧", 5)
+
+local function createSection(tabName, title)
+    local section = Instance.new("Frame")
+    section.Size = UDim2.new(1, 0, 0, 40)
+    section.BackgroundColor3 = COLOR_BG
+    section.BackgroundTransparency = 0.2
+    section.BorderSizePixel = 0
+    section.Visible = false
+    section.Parent = contentFrame
+
+    table.insert(tabs[tabName].elements, section)
+
+    local sectionCorner = Instance.new("UICorner")
+    sectionCorner.CornerRadius = UDim.new(0, 10)
+    sectionCorner.Parent = section
+
+    local sectionStroke = Instance.new("UIStroke")
+    sectionStroke.Color = COLOR_YELLOW_DARK
+    sectionStroke.Thickness = 2
+    sectionStroke.Transparency = 0.6
+    sectionStroke.Parent = section
+
+    local sectionTitle = Instance.new("TextLabel")
+    sectionTitle.Size = UDim2.new(1, -20, 1, 0)
+    sectionTitle.Position = UDim2.new(0, 10, 0, 0)
+    sectionTitle.BackgroundTransparency = 1
+    sectionTitle.Text = title
+    sectionTitle.Font = Enum.Font.GothamBold
+    sectionTitle.TextSize = isMobile and 13 or 16
+    sectionTitle.TextColor3 = COLOR_YELLOW_LIGHT
+    sectionTitle.TextXAlignment = Enum.TextXAlignment.Left
+    sectionTitle.Parent = section
+
+    return section
+end
+
+local function createToggle(tabName, text, defaultState, callback)
+    local toggle = Instance.new("Frame")
+    toggle.Size = UDim2.new(1, 0, 0, 45)
+    toggle.BackgroundColor3 = COLOR_BG
+    toggle.BackgroundTransparency = 0.25
+    toggle.BorderSizePixel = 0
+    toggle.Visible = false
+    toggle.Parent = contentFrame
+
+    table.insert(tabs[tabName].elements, toggle)
+
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 10)
+    toggleCorner.Parent = toggle
+
+    local toggleStroke = Instance.new("UIStroke")
+    toggleStroke.Color = COLOR_YELLOW_DARK
+    toggleStroke.Thickness = 2
+    toggleStroke.Transparency = 0.7
+    toggleStroke.Parent = toggle
+
+    local toggleLabel = Instance.new("TextLabel")
+    toggleLabel.Size = UDim2.new(1, -80, 1, 0)
+    toggleLabel.Position = UDim2.new(0, 15, 0, 0)
+    toggleLabel.BackgroundTransparency = 1
+    toggleLabel.Text = text
+    toggleLabel.Font = Enum.Font.Gotham
+    toggleLabel.TextSize = isMobile and 12 or 14
+    toggleLabel.TextColor3 = COLOR_WHITE
+    toggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    toggleLabel.TextWrapped = true
+    toggleLabel.Parent = toggle
+
+    local switchCont = Instance.new("Frame")
+    switchCont.Size = UDim2.new(0, 50, 0, 24)
+    switchCont.Position = UDim2.new(1, -60, 0.5, -12)
+    switchCont.BackgroundColor3 = defaultState and COLOR_YELLOW_DARK or Color3.fromRGB(40, 40, 40)
+    switchCont.BorderSizePixel = 0
+    switchCont.Parent = toggle
+
+    local switchCorner = Instance.new("UICorner")
+    switchCorner.CornerRadius = UDim.new(1, 0)
+    switchCorner.Parent = switchCont
+
+    local toggleCircle = Instance.new("Frame")
+    toggleCircle.Size = UDim2.new(0, 20, 0, 20)
+    toggleCircle.Position = defaultState and UDim2.new(1, -23, 0, 2) or UDim2.new(0, 2, 0, 2)
+    toggleCircle.BackgroundColor3 = defaultState and COLOR_YELLOW or Color3.fromRGB(100, 100, 100)
+    toggleCircle.BorderSizePixel = 0
+    toggleCircle.Parent = switchCont
+
+    local circleCorner = Instance.new("UICorner")
+    circleCorner.CornerRadius = UDim.new(1, 0)
+    circleCorner.Parent = toggleCircle
+
+    local isActive = defaultState
+    local switchData = {
+        toggle = toggleCircle,
+        switchCont = switchCont
+    }
+
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(1, 0, 1, 0)
+    toggleButton.BackgroundTransparency = 1
+    toggleButton.Text = ""
+    toggleButton.Parent = toggle
+
+    toggleButton.MouseButton1Click:Connect(function()
+        clickSound:Play()
+        isActive = not isActive
+        toggleSwitch(switchData, isActive)
+        if callback then
+            callback(isActive)
+        end
+    end)
+
+    return toggle, switchData, function() return isActive end
+end
+
+local function createSlider(tabName, text, min, max, default, callback)
+    local slider = Instance.new("Frame")
+    slider.Size = UDim2.new(1, 0, 0, 65)
+    slider.BackgroundColor3 = COLOR_BG
+    slider.BackgroundTransparency = 0.25
+    slider.BorderSizePixel = 0
+    slider.Visible = false
+    slider.Parent = contentFrame
+
+    table.insert(tabs[tabName].elements, slider)
+
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 10)
+    sliderCorner.Parent = slider
+
+    local sliderStroke = Instance.new("UIStroke")
+    sliderStroke.Color = COLOR_YELLOW_DARK
+    sliderStroke.Thickness = 2
+    sliderStroke.Transparency = 0.7
+    sliderStroke.Parent = slider
+
+    local sliderLabel = Instance.new("TextLabel")
+    sliderLabel.Size = UDim2.new(1, -20, 0, 20)
+    sliderLabel.Position = UDim2.new(0, 10, 0, 8)
+    sliderLabel.BackgroundTransparency = 1
+    sliderLabel.Text = text
+    sliderLabel.Font = Enum.Font.Gotham
+    sliderLabel.TextSize = isMobile and 11 or 13
+    sliderLabel.TextColor3 = COLOR_WHITE
+    sliderLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sliderLabel.Parent = slider
+
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0, 60, 0, 20)
+    valueLabel.Position = UDim2.new(1, -70, 0, 8)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(default)
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = isMobile and 11 or 13
+    valueLabel.TextColor3 = COLOR_YELLOW
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.Parent = slider
+
+    local sliderBack = Instance.new("Frame")
+    sliderBack.Size = UDim2.new(1, -20, 0, 6)
+    sliderBack.Position = UDim2.new(0, 10, 1, -20)
+    sliderBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    sliderBack.BorderSizePixel = 0
+    sliderBack.Parent = slider
+
+    local sliderBackCorner = Instance.new("UICorner")
+    sliderBackCorner.CornerRadius = UDim.new(1, 0)
+    sliderBackCorner.Parent = sliderBack
+
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    sliderFill.BackgroundColor3 = COLOR_YELLOW
+    sliderFill.BorderSizePixel = 0
+    sliderFill.Parent = sliderBack
+
+    local sliderFillCorner = Instance.new("UICorner")
+    sliderFillCorner.CornerRadius = UDim.new(1, 0)
+    sliderFillCorner.Parent = sliderFill
+
+    local sliderButton = Instance.new("Frame")
+    sliderButton.Size = UDim2.new(0, 16, 0, 16)
+    sliderButton.Position = UDim2.new((default - min) / (max - min), -8, 0.5, -8)
+    sliderButton.BackgroundColor3 = COLOR_YELLOW_LIGHT
+    sliderButton.BorderSizePixel = 0
+    sliderButton.Parent = sliderBack
+
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(1, 0)
+    buttonCorner.Parent = sliderButton
+
+    local buttonStroke = Instance.new("UIStroke")
+    buttonStroke.Color = COLOR_YELLOW
+    buttonStroke.Thickness = 2
+    buttonStroke.Parent = sliderButton
+
+    local dragging = false
+    local currentValue = default
+
+    local function updateSlider(input)
+        local relativeX = math.clamp((input.Position.X - sliderBack.AbsolutePosition.X) / sliderBack.AbsoluteSize.X, 0, 1)
+        currentValue = math.floor(min + (max - min) * relativeX)
+        
+        sliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
+        sliderButton.Position = UDim2.new(relativeX, -8, 0.5, -8)
+        valueLabel.Text = tostring(currentValue)
+        
+        if callback then
+            callback(currentValue)
+        end
+    end
+
+    sliderBack.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateSlider(input)
+        end
+    end)
+
+    sliderBack.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSlider(input)
+        end
+    end)
+
+    return slider
+end
+
+local function createButton(tabName, text, callback)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, 0, 0, 45)
+    button.BackgroundColor3 = COLOR_BG
+    button.BackgroundTransparency = 0.2
+    button.Text = text
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = isMobile and 12 or 14
+    button.TextColor3 = COLOR_YELLOW_LIGHT
+    button.BorderSizePixel = 0
+    button.Visible = false
+    button.Parent = contentFrame
+
+    table.insert(tabs[tabName].elements, button)
+
+    local buttonCorner = Instance.new("UICorner")
+    buttonCorner.CornerRadius = UDim.new(0, 10)
+    buttonCorner.Parent = button
+
+    local buttonStroke = Instance.new("UIStroke")
+    buttonStroke.Color = COLOR_YELLOW
+    buttonStroke.Thickness = 2
+    buttonStroke.Transparency = 0.5
+    buttonStroke.Parent = button
+
+    button.MouseButton1Click:Connect(function()
+        clickSound:Play()
+        if callback then
+            callback()
+        end
+    end)
+
+    button.MouseEnter:Connect(function()
+        buttonStroke.Transparency = 0.2
+        button.BackgroundTransparency = 0.1
+    end)
+
+    button.MouseLeave:Connect(function()
+        buttonStroke.Transparency = 0.5
+        button.BackgroundTransparency = 0.2
+    end)
+
+    return button
+end
+
+local function createKeybindButton(tabName, text, featureName)
+    local keybindFrame = Instance.new("Frame")
+    keybindFrame.Size = UDim2.new(1, 0, 0, 45)
+    keybindFrame.BackgroundColor3 = COLOR_BG
+    keybindFrame.BackgroundTransparency = 0.25
+    keybindFrame.BorderSizePixel = 0
+    keybindFrame.Visible = false
+    keybindFrame.Parent = contentFrame
+
+    table.insert(tabs[tabName].elements, keybindFrame)
+
+    local keybindCorner = Instance.new("UICorner")
+    keybindCorner.CornerRadius = UDim.new(0, 10)
+    keybindCorner.Parent = keybindFrame
+
+    local keybindStroke = Instance.new("UIStroke")
+    keybindStroke.Color = COLOR_YELLOW_DARK
+    keybindStroke.Thickness = 2
+    keybindStroke.Transparency = 0.7
+    keybindStroke.Parent = keybindFrame
+
+    local keybindLabel = Instance.new("TextLabel")
+    keybindLabel.Size = UDim2.new(1, -110, 1, 0)
+    keybindLabel.Position = UDim2.new(0, 15, 0, 0)
+    keybindLabel.BackgroundTransparency = 1
+    keybindLabel.Text = text
+    keybindLabel.Font = Enum.Font.Gotham
+    keybindLabel.TextSize = isMobile and 11 or 13
+    keybindLabel.TextColor3 = COLOR_WHITE
+    keybindLabel.TextXAlignment = Enum.TextXAlignment.Left
+    keybindLabel.Parent = keybindFrame
+
+    local keybindButton = Instance.new("TextButton")
+    keybindButton.Size = UDim2.new(0, 90, 0, 30)
+    keybindButton.Position = UDim2.new(1, -100, 0.5, -15)
+    keybindButton.BackgroundColor3 = COLOR_BG
+    keybindButton.BackgroundTransparency = 0.3
+    keybindButton.Text = tostring(KeybindManager.keybinds[featureName]):gsub("Enum.KeyCode.", "")
+    keybindButton.Font = Enum.Font.GothamBold
+    keybindButton.TextSize = isMobile and 10 or 12
+    keybindButton.TextColor3 = COLOR_YELLOW
+    keybindButton.BorderSizePixel = 0
+    keybindButton.Parent = keybindFrame
+
+    local keyCorner = Instance.new("UICorner")
+    keyCorner.CornerRadius = UDim.new(0, 6)
+    keyCorner.Parent = keybindButton
+
+    local keyStroke = Instance.new("UIStroke")
+    keyStroke.Color = COLOR_YELLOW
+    keyStroke.Thickness = 2
+    keyStroke.Transparency = 0.6
+    keyStroke.Parent = keybindButton
+
+    local isWaiting = false
+
+    keybindButton.MouseButton1Click:Connect(function()
+        if isWaiting then return end
+        isWaiting = true
+        keybindButton.Text = "Press Key..."
+        keybindButton.TextColor3 = COLOR_YELLOW_LIGHT
+
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                KeybindManager.keybinds[featureName] = input.KeyCode
+                keybindButton.Text = tostring(input.KeyCode):gsub("Enum.KeyCode.", "")
+                keybindButton.TextColor3 = COLOR_YELLOW
+                isWaiting = false
+                connection:Disconnect()
+                saveSettings()
+            end
+        end)
+    end)
+
+    return keybindFrame
+end
+
+-- Main Tab Content
+createSection("Main", "🎯 Combat Features")
+
+local State = {
+    BatAimbot = false,
+    BatAimbotConnection = nil,
+    PaintballSpam = false,
+    PaintballSpamConnection = nil,
+    HighestESP = false,
+    HighestEspUpdateConnection = nil,
+    Helicopter = false,
+    HelicopterBV = nil,
+    ESP = false,
+    ESPConnections = {},
+    AutoSteal = false,
+    Medusa = false,
+    SpinBot = false,
+    SpinBotConnection = nil,
+    AntiRagdoll = false,
+    Optimizer = false,
+    XRay = false,
+    AntiBeeDisc = false,
+    PlayerFollower = false,
+    PlayerFollowerConnection = nil,
+    FollowTarget = nil,
+    StealingSpeed = false
+}
+
+local function findClosestPlayer()
+    local character = player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+    
+    local myPos = character.HumanoidRootPart.Position
+    local closest = nil
+    local shortestDist = math.huge
+    
+    for _, otherPlayer in pairs(Players:GetPlayers()) do
+        if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (otherPlayer.Character.HumanoidRootPart.Position - myPos).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                closest = otherPlayer
+            end
+        end
+    end
+    
+    return closest
+end
+
+createToggle("Main", "Bat Aimbot", false, function(enabled)
+    State.BatAimbot = enabled
+    
+    if State.BatAimbotConnection then
+        State.BatAimbotConnection:Disconnect()
+        State.BatAimbotConnection = nil
+    end
+    
+    if enabled then
+        showNotification("Bat Aimbot Enabled")
+        
+        State.BatAimbotConnection = RunService.Heartbeat:Connect(function()
+            if not State.BatAimbot then return end
+            
+            local character = player.Character
+            if not character then return end
+            
+            local tool = character:FindFirstChildWhichIsA("Tool")
+            if not tool or not tool.Name:lower():find("bat") then return end
+            
+            local target = findClosestPlayer()
+            if not target or not target.Character then return end
+            
+            local targetChar = target.Character
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            local myRoot = character:FindFirstChild("HumanoidRootPart")
+            
+            if targetRoot and myRoot then
+                local direction = (targetRoot.Position - myRoot.Position).Unit
+                myRoot.CFrame = CFrame.new(myRoot.Position, myRoot.Position + direction)
+            end
+        end)
+    else
+        showNotification("Bat Aimbot Disabled")
+    end
+end)
+
+createToggle("Main", "Paintball Spam", false, function(enabled)
+    State.PaintballSpam = enabled
+    
+    if State.PaintballSpamConnection then
+        State.PaintballSpamConnection:Disconnect()
+        State.PaintballSpamConnection = nil
+    end
+    
+    if enabled then
+        showNotification("Paintball Spam Enabled")
+        
+        State.PaintballSpamConnection = RunService.Heartbeat:Connect(function()
+            if not State.PaintballSpam then return end
+            
+            local character = player.Character
+            if not character then return end
+            
+            local tool = character:FindFirstChildWhichIsA("Tool")
+            if tool and tool.Name:lower():find("paintball") then
+                tool:Activate()
+            end
+        end)
+    else
+        showNotification("Paintball Spam Disabled")
+    end
+end)
+
+-- Player Tab Content
+createSection("Player", "🏃 Movement")
+
+createSlider("Player", "Walk Speed", 16, 500, DataStore.Speed or 28.5, function(value)
+    DataStore.Speed = value
+    saveSettings()
+    
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        character.Humanoid.WalkSpeed = value
+    end
+end)
+
+createSlider("Player", "Jump Power", 50, 500, DataStore.JumpPower or 50, function(value)
+    DataStore.JumpPower = value
+    saveSettings()
+    
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        character.Humanoid.JumpPower = value
+    end
+end)
+
+createSlider("Player", "Gravity", 0, 196.2, DataStore.Gravity or 196.2, function(value)
+    DataStore.Gravity = value
+    saveSettings()
+    Workspace.Gravity = value
+end)
+
+createSection("Player", "🚁 Special Movement")
+
+createSlider("Player", "Helicopter Speed", 0, 200, DataStore.HelicopterSpeed or 0, function(value)
+    DataStore.HelicopterSpeed = value
+    saveSettings()
+end)
+
+createToggle("Player", "Helicopter Mode", false, function(enabled)
+    State.Helicopter = enabled
+    
+    if enabled then
+        showNotification("Helicopter Mode Enabled")
+        
+        local character = player.Character
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            local hrp = character.HumanoidRootPart
+            
+            if State.HelicopterBV then
+                State.HelicopterBV:Destroy()
+            end
+            
+            State.HelicopterBV = Instance.new("BodyVelocity")
+            State.HelicopterBV.MaxForce = Vector3.new(0, math.huge, 0)
+            State.HelicopterBV.Velocity = Vector3.new(0, DataStore.HelicopterSpeed or 0, 0)
+            State.HelicopterBV.Parent = hrp
+        end
+    else
+        showNotification("Helicopter Mode Disabled")
+        
+        if State.HelicopterBV then
+            State.HelicopterBV:Destroy()
+            State.HelicopterBV = nil
+        end
+    end
+end)
+
+createToggle("Player", "Anti Ragdoll", false, function(enabled)
+    State.AntiRagdoll = enabled
+    
+    if enabled then
+        showNotification("Anti Ragdoll Enabled")
+    else
+        showNotification("Anti Ragdoll Disabled")
+    end
+end)
+
+createSection("Player", "🎯 Targeting")
+
+createToggle("Player", "Player Follower", false, function(enabled)
+    State.PlayerFollower = enabled
+    
+    if State.PlayerFollowerConnection then
+        State.PlayerFollowerConnection:Disconnect()
+        State.PlayerFollowerConnection = nil
+    end
+    
+    if enabled then
+        showNotification("Player Follower Enabled")
+        State.FollowTarget = findClosestPlayer()
+        
+        State.PlayerFollowerConnection = RunService.Heartbeat:Connect(function()
+            if not State.PlayerFollower then return end
+            
+            local character = player.Character
+            if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+            
+            if not State.FollowTarget or not State.FollowTarget.Character then
+                State.FollowTarget = findClosestPlayer()
+            end
+            
+            if State.FollowTarget and State.FollowTarget.Character and State.FollowTarget.Character:FindFirstChild("HumanoidRootPart") then
+                local targetPos = State.FollowTarget.Character.HumanoidRootPart.Position
+                local myPos = character.HumanoidRootPart.Position
+                local direction = (targetPos - myPos).Unit
+                
+                character.HumanoidRootPart.CFrame = CFrame.new(myPos + direction * 2, targetPos)
+            end
+        end)
+    else
+        showNotification("Player Follower Disabled")
+        State.FollowTarget = nil
+    end
+end)
+
+-- Visual Tab Content
+createSection("Visual", "👁 ESP & Vision")
+
+createToggle("Visual", "ESP (All Players)", false, function(enabled)
+    State.ESP = enabled
+    
+    for _, connection in pairs(State.ESPConnections) do
+        connection:Disconnect()
+    end
+    State.ESPConnections = {}
+    
+    if enabled then
+        showNotification("ESP Enabled")
+        
+        local function addESP(character)
+            if not character then return end
+            
+            local hrp = character:WaitForChild("HumanoidRootPart", 5)
+            if not hrp then return end
+            
+            local highlight = Instance.new("Highlight")
+            highlight.FillColor = COLOR_YELLOW
+            highlight.OutlineColor = COLOR_YELLOW_LIGHT
+            highlight.FillTransparency = 0.5
+            highlight.OutlineTransparency = 0
+            highlight.Parent = character
+            
+            table.insert(State.ESPConnections, character.AncestryChanged:Connect(function()
+                if not character.Parent then
+                    highlight:Destroy()
+                end
+            end))
+        end
+        
+        for _, otherPlayer in pairs(Players:GetPlayers()) do
+            if otherPlayer ~= player and otherPlayer.Character then
+                addESP(otherPlayer.Character)
+            end
+            
+            table.insert(State.ESPConnections, otherPlayer.CharacterAdded:Connect(addESP))
+        end
+        
+        table.insert(State.ESPConnections, Players.PlayerAdded:Connect(function(newPlayer)
+            if newPlayer ~= player then
+                table.insert(State.ESPConnections, newPlayer.CharacterAdded:Connect(addESP))
+            end
+        end))
+    else
+        showNotification("ESP Disabled")
+        
+        for _, otherPlayer in pairs(Players:GetPlayers()) do
+            if otherPlayer.Character then
+                local highlight = otherPlayer.Character:FindFirstChildOfClass("Highlight")
+                if highlight then
+                    highlight:Destroy()
+                end
+            end
+        end
+    end
+end)
+
+createToggle("Visual", "Highest Value ESP", false, function(enabled)
+    State.HighestESP = enabled
+    
+    if State.HighestEspUpdateConnection then
+        State.HighestEspUpdateConnection:Disconnect()
+        State.HighestEspUpdateConnection = nil
+    end
+    
+    if enabled then
+        showNotification("Highest Value ESP Enabled")
+        -- Highest ESP logic would go here
+    else
+        showNotification("Highest Value ESP Disabled")
+    end
+end)
+
+createToggle("Visual", "X-Ray Vision", false, function(enabled)
+    State.XRay = enabled
+    
+    if enabled then
+        showNotification("X-Ray Enabled")
+        
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and not obj.Parent:FindFirstChild("Humanoid") then
+                obj.LocalTransparencyModifier = 0.7
+            end
+        end
+    else
+        showNotification("X-Ray Disabled")
+        
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                obj.LocalTransparencyModifier = 0
+            end
+        end
+    end
+end)
+
+-- Misc Tab Content
+createSection("Misc", "⚙ Utilities")
+
+createToggle("Misc", "Auto Steal (Highest)", false, function(enabled)
+    State.AutoSteal = enabled
+    
+    if enabled then
+        showNotification("Auto Steal Enabled")
+    else
+        showNotification("Auto Steal Disabled")
+    end
+end)
+
+createToggle("Misc", "Stealing Speed Boost", false, function(enabled)
+    State.StealingSpeed = enabled
+    
+    if enabled then
+        showNotification("Stealing Speed Enabled")
+    else
+        showNotification("Stealing Speed Disabled")
+    end
+end)
+
+createToggle("Misc", "Medusa Mode", false, function(enabled)
+    State.Medusa = enabled
+    
+    if enabled then
+        showNotification("Medusa Mode Enabled")
+    else
+        showNotification("Medusa Mode Disabled")
+    end
+end)
+
+createToggle("Misc", "Spin Bot", false, function(enabled)
+    State.SpinBot = enabled
+    
+    if State.SpinBotConnection then
+        State.SpinBotConnection:Disconnect()
+        State.SpinBotConnection = nil
+    end
+    
+    if enabled then
+        showNotification("Spin Bot Enabled")
+        
+        State.SpinBotConnection = RunService.RenderStepped:Connect(function()
+            if not State.SpinBot then return end
+            
+            local character = player.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                character.HumanoidRootPart.CFrame = character.HumanoidRootPart.CFrame * CFrame.Angles(0, math.rad(20), 0)
+            end
+        end)
+    else
+        showNotification("Spin Bot Disabled")
+    end
+end)
+
+createToggle("Misc", "Anti Bee Disc", false, function(enabled)
+    State.AntiBeeDisc = enabled
+    
+    if enabled then
+        showNotification("Anti Bee Disc Enabled")
+    else
+        showNotification("Anti Bee Disc Disabled")
+    end
+end)
+
+createToggle("Misc", "Optimizer (FPS Boost)", false, function(enabled)
+    State.Optimizer = enabled
+    
+    if enabled then
+        showNotification("Optimizer Enabled")
+        
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+                obj.Enabled = false
+            end
+        end
+    else
+        showNotification("Optimizer Disabled")
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+    end
+end)
+
+-- Settings Tab Content
+createSection("Settings", "⌨ Keybinds")
+
+createKeybindButton("Settings", "Bat Aimbot", "BatAimbot")
+createKeybindButton("Settings", "Paintball Spam", "PaintballSpam")
+createKeybindButton("Settings", "Highest ESP", "HighestESP")
+createKeybindButton("Settings", "Helicopter", "Helicopter")
+createKeybindButton("Settings", "ESP Toggle", "ESP")
+createKeybindButton("Settings", "Auto Steal", "AutoSteal")
+createKeybindButton("Settings", "Medusa Mode", "Medusa")
+createKeybindButton("Settings", "Spin Bot", "SpinBot")
+createKeybindButton("Settings", "Anti Ragdoll", "AntiRagdoll")
+createKeybindButton("Settings", "Optimizer", "Optimizer")
+createKeybindButton("Settings", "X-Ray Vision", "XRay")
+createKeybindButton("Settings", "Anti Bee Disc", "AntiBeeDisc")
+createKeybindButton("Settings", "Player Follower", "PlayerFollower")
+createKeybindButton("Settings", "Stealing Speed", "StealingSpeed")
+
+createSection("Settings", "💾 Data")
+
+createButton("Settings", "Save Settings", function()
+    saveSettings()
+    showNotification("Settings Saved!")
+end)
+
+createButton("Settings", "Reset to Default", function()
+    DataStore = {
+        Speed = 28.5,
+        Gravity = 196.2,
+        JumpPower = 50,
+        HelicopterSpeed = 0,
+        Keybinds = {}
+    }
+    
+    KeybindManager.keybinds = {
+        BatAimbot = Enum.KeyCode.Z,
+        PaintballSpam = Enum.KeyCode.X,
+        HighestESP = Enum.KeyCode.C,
+        Helicopter = Enum.KeyCode.H,
+        ESP = Enum.KeyCode.E,
+        AutoSteal = Enum.KeyCode.V,
+        Medusa = Enum.KeyCode.M,
+        SpinBot = Enum.KeyCode.S,
+        AntiRagdoll = Enum.KeyCode.R,
+        Optimizer = Enum.KeyCode.O,
+        XRay = Enum.KeyCode.K,
+        AntiBeeDisc = Enum.KeyCode.B,
+        PlayerFollower = Enum.KeyCode.L,
+        StealingSpeed = Enum.KeyCode.T,
+    }
+    
+    saveSettings()
+    showNotification("Settings Reset to Default!")
+end)
+
+-- Set Main tab as default
+tabs["Main"].button.MouseButton1Click:Connect(function() end)
+task.wait()
+tabs["Main"].button:GetPropertyChangedSignal("Parent"):Wait()
+tabs["Main"].button.MouseButton1Click:Fire()
+
+-- Keybind System
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    for featureName, keyCode in pairs(KeybindManager.keybinds) do
+        if input.KeyCode == keyCode then
+            if featureName == "BatAimbot" then
+                State.BatAimbot = not State.BatAimbot
+                -- Toggle logic here
+            elseif featureName == "PaintballSpam" then
+                State.PaintballSpam = not State.PaintballSpam
+            elseif featureName == "ESP" then
+                State.ESP = not State.ESP
+            -- Add more keybind handlers as needed
+            end
+        end
+    end
+end)
+
+-- Character Reset Handler
+player.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    
+    humanoid.WalkSpeed = DataStore.Speed or 28.5
+    humanoid.JumpPower = DataStore.JumpPower or 50
+    Workspace.Gravity = DataStore.Gravity or 196.2
+    
+    if State.AntiRagdoll then
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end
+end)
+
+-- Anti Ragdoll Handler
+if player.Character then
+    local humanoid = player.Character:FindFirstChild("Humanoid")
+    if humanoid and State.AntiRagdoll then
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    end
+end
+
+-- Anti Bee Disc Handler
+if State.AntiBeeDisc then
+    Workspace.DescendantAdded:Connect(function(obj)
+        if State.AntiBeeDisc and obj.Name == "BeeDisc" then
+            task.wait()
+            obj:Destroy()
+        end
+    end)
+end
+
+-- Auto Steal Feature (Simplified version)
+do
+    local PromptMemoryCache = {}
+    local autoStealEnabled = false
+    local selectedTargetIndex = 1
+    local currentStealProgress = 0
+    local isCurrentlyStealing = false
+    local lastProgressValue = 0
+    local lastProgressUpdate = 0
+    
+    local progressBarContainer = nil
+    local progressBarFill = nil
+    local progressBarText = nil
+    local frame = nil
+    local statusLabel = nil
+    local targetLabel = nil
+    local toggleButton = nil
+    local stealStatusLabel = nil
+    local petButtons = {}
+    
+    local function createProgressBarGUI()
+        local progressGui = Instance.new("ScreenGui")
+        progressGui.Name = "ProgressBarGUI"
+        progressGui.ResetOnSpawn = false
+        progressGui.Parent = playerGui
+        
+        progressBarContainer = Instance.new("Frame")
+        progressBarContainer.Size = UDim2.new(0, 300, 0, 30)
+        progressBarContainer.Position = UDim2.new(0.5, -150, 0, 100)
+        progressBarContainer.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        progressBarContainer.BackgroundTransparency = 0.3
+        progressBarContainer.BorderSizePixel = 0
+        progressBarContainer.Visible = false
+        progressBarContainer.Parent = progressGui
+        
+        local progressCorner = Instance.new("UICorner")
+        progressCorner.CornerRadius = UDim.new(0, 8)
+        progressCorner.Parent = progressBarContainer
+        
+        local progressStroke = Instance.new("UIStroke")
+        progressStroke.Color = Color3.fromRGB(100, 100, 100)
+        progressStroke.Thickness = 2
+        progressStroke.Parent = progressBarContainer
+        
+        progressBarFill = Instance.new("Frame")
+        progressBarFill.Size = UDim2.new(0, 0, 1, -4)
+        progressBarFill.Position = UDim2.new(0, 2, 0, 2)
+        progressBarFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+        progressBarFill.BorderSizePixel = 0
+        progressBarFill.Parent = progressBarContainer
+        
+        local fillCorner = Instance.new("UICorner")
+        fillCorner.CornerRadius = UDim.new(0, 6)
+        fillCorner.Parent = progressBarFill
+        
+        progressBarText = Instance.new("TextLabel")
+        progressBarText.Size = UDim2.new(1, 0, 1, 0)
+        progressBarText.BackgroundTransparency = 1
+        progressBarText.Text = ""
+        progressBarText.Font = Enum.Font.GothamBold
+        progressBarText.TextSize = 14
+        progressBarText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        progressBarText.TextStrokeTransparency = 0.5
+        progressBarText.Parent = progressBarContainer
+    end
+    
+    local function createMobileGUI()
+        frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 300, 0, 200)
+        frame.Position = UDim2.new(0.5, -150, 1, -220)
+        frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        frame.BackgroundTransparency = 0.2
+        frame.BorderSizePixel = 0
+        frame.Parent = gui
+        
+        local cornerFrame = Instance.new("UICorner")
+        cornerFrame.CornerRadius = UDim.new(0, 10)
+        cornerFrame.Parent = frame
+        
+        local strokeFrame = Instance.new("UIStroke")
+        strokeFrame.Color = Color3.fromRGB(180, 0, 255)
+        strokeFrame.Thickness = 3
+        strokeFrame.Transparency = 0.5
+        strokeFrame.Parent = frame
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, -20, 0, 30)
+        titleLabel.Position = UDim2.new(0, 10, 0, 5)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = "Auto Steal Control"
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextSize = 16
+        titleLabel.TextColor3 = Color3.fromRGB(180, 0, 255)
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.Parent = frame
+        
+        statusLabel = Instance.new("TextLabel")
+        statusLabel.Size = UDim2.new(0, 50, 0, 30)
+        statusLabel.Position = UDim2.new(1, -60, 0, 5)
+        statusLabel.BackgroundTransparency = 1
+        statusLabel.Text = "OFF"
+        statusLabel.Font = Enum.Font.GothamBold
+        statusLabel.TextSize = 14
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        statusLabel.Parent = frame
+        
+        targetLabel = Instance.new("TextLabel")
+        targetLabel.Size = UDim2.new(1, -20, 0, 20)
+        targetLabel.Position = UDim2.new(0, 10, 0, 40)
+        targetLabel.BackgroundTransparency = 1
+        targetLabel.Text = "Current: Off"
+        targetLabel.Font = Enum.Font.Gotham
+        targetLabel.TextSize = 12
+        targetLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+        targetLabel.Parent = frame
+        
+        for i = 1, 3 do
+            local petButton = Instance.new("TextButton")
+            petButton.Size = UDim2.new(1, -20, 0, 30)
+            petButton.Position = UDim2.new(0, 10, 0, 60 + (i-1) * 35)
+            petButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            petButton.BackgroundTransparency = 0.3
+            petButton.Text = string.format("#%d: Off", i)
+            petButton.Font = Enum.Font.Gotham
+            petButton.TextSize = 11
+            petButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+            petButton.BorderSizePixel = 0
+            petButton.Parent = frame
+            
+            local petCorner = Instance.new("UICorner")
+            petCorner.CornerRadius = UDim.new(0, 6)
+            petCorner.Parent = petButton
+            
+            local petStroke = Instance.new("UIStroke")
+            petStroke.Color = Color3.fromRGB(100, 100, 100)
+            petStroke.Thickness = 1
+            petStroke.Transparency = 0.7
+            petStroke.Parent = petButton
+            
+            petButton.MouseButton1Click:Connect(function()
+                selectedTargetIndex = i
+            end)
+            
+            petButtons[i] = {button = petButton, stroke = petStroke}
+        end
+        
+        toggleButton = Instance.new("TextButton")
+        toggleButton.Size = UDim2.new(1, -20, 0, 35)
+        toggleButton.Position = UDim2.new(0, 10, 1, -45)
+        toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        toggleButton.BackgroundTransparency = 0.15
+        toggleButton.Text = "Enable"
+        toggleButton.Font = Enum.Font.GothamBold
+        toggleButton.TextSize = 14
+        toggleButton.TextColor3 = Color3.fromRGB(100, 255, 100)
+        toggleButton.BorderSizePixel = 0
+        toggleButton.Parent = frame
+        
+        local toggleCorner = Instance.new("UICorner")
+        toggleCorner.CornerRadius = UDim.new(0, 8)
+        toggleCorner.Parent = toggleButton
+        
+        local toggleStroke = Instance.new("UIStroke")
+        toggleStroke.Color = Color3.fromRGB(100, 255, 100)
+        toggleStroke.Thickness = 2
+        toggleStroke.Transparency = 0.5
+        toggleStroke.Parent = toggleButton
+        
+        return true
+    end
+
+    local function get_top_3_pets()
+        return {}
+    end
+
+    local function isMyBaseAnimal(animalData)
+        return false
+    end
+
+    local function findProximityPromptForAnimal(animalData)
+        return nil
+    end
+
+    local function attemptSteal(prompt)
+    end
+
+    local function updateProgressBar()
+        if not progressBarFill or not progressBarText or not progressBarContainer then
+            return
+        end
+        
+        local now = tick()
+        
+        if now - lastProgressUpdate < 0.01 then
+            return
+        end
+        
+        if isCurrentlyStealing then
+            local targetWidth = math.min(currentStealProgress * 296, 296)
+            local smoothedWidth = lastProgressValue + (targetWidth - lastProgressValue) * 0.3
+            local fillWidth = math.max(0, smoothedWidth)
+            
+            progressBarFill.Size = UDim2.new(0, fillWidth, 1, -4)
+            progressBarText.Text = string.format("Stealing: %.1f%%", (fillWidth / 296) * 100)
+            
+            if isCurrentlyStealing then
+                progressBarContainer.Visible = true
+                progressBarText.TextStrokeTransparency = 0.3
+            else
+                progressBarText.TextStrokeTransparency = 0.5
+                if fillWidth <= 0 then
+                    progressBarText.Text = ""
+                    progressBarFill.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                    progressBarFill.Size = UDim2.new(0, 0, 1, -4)
+                end
+            end
+            
+            lastProgressValue = smoothedWidth
+            lastProgressUpdate = now
+        end
+    end
+
+    local function updateUI(enabled, topPets)
+        if not statusLabel or not targetLabel or not toggleButton then
+            return
+        end
+        
+        autoStealEnabled = enabled
+        
+        if enabled then
+            statusLabel.Text = "ON"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+            
+            if frame and frame:FindFirstChild("UIStroke") then
+                frame.UIStroke.Color = Color3.fromRGB(100, 255, 100)
+                frame.UIStroke.Transparency = 0.3
+            end
+            
+            toggleButton.Text = "Disable"
+            
+            if topPets and type(topPets) == "table" and petButtons then
+                for i = 1, 3 do
+                    if petButtons[i] and petButtons[i].button then
+                        if topPets[i] then
+                            local pet = topPets[i]
+                            petButtons[i].button.Text = string.format("#%d: %s", i, pet.petName or "?")
+                        else
+                            petButtons[i].button.Text = string.format("#%d: No", i)
+                        end
+                    end
+                end
+                
+                if topPets[selectedTargetIndex] then
+                    local currentPet = topPets[selectedTargetIndex]
+                    targetLabel.Text = string.format("Current: %s", currentPet.petName or "?")
+                else
+                    targetLabel.Text = "Current: None"
+                end
+            else
+                targetLabel.Text = "Current: Searching..."
+                if petButtons then
+                    for i = 1, 3 do
+                        if petButtons[i] and petButtons[i].button then
+                            petButtons[i].button.Text = string.format("#%d: ...", i)
+                        end
+                    end
+                end
+            end
+            
+            if petButtons then
+                for i, btn in ipairs(petButtons) do
+                    if i == selectedTargetIndex and btn.button and btn.stroke then
+                        btn.button.TextColor3 = Color3.fromRGB(100, 255, 100)
+                        btn.stroke.Color = Color3.fromRGB(100, 255, 100)
+                        btn.stroke.Transparency = 0.3
+                    elseif btn.button and btn.stroke then
+                        btn.button.TextColor3 = Color3.fromRGB(200, 200, 200)
+                        btn.stroke.Color = Color3.fromRGB(100, 100, 100)
+                        btn.stroke.Transparency = 0.7
+                    end
+                end
+            end
+        else
+            statusLabel.Text = "OFF"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            
+            if frame and frame:FindFirstChild("UIStroke") then
+                frame.UIStroke.Color = Color3.fromRGB(180, 0, 255)
+                frame.UIStroke.Transparency = 0.5
+            end
+            
+            toggleButton.Text = "Enable"
+            targetLabel.Text = "Current: Off"
+            
+            if petButtons then
+                for i = 1, 3 do
+                    if petButtons[i] and petButtons[i].button then
+                        petButtons[i].button.Text = string.format("#%d: Off", i)
+                        petButtons[i].button.TextColor3 = Color3.fromRGB(150, 150, 150)
+                    end
+                end
+            end
+        end
+        
+        if autoStealEnabled and stealStatusLabel then
+            stealStatusLabel.Text = "Steal: Active (See progress bar)"
+            stealStatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else
+            stealStatusLabel.Text = "Steal: Disabled"
+            stealStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+    end
+
+    local stealConnection = nil
+
+    local function autoStealLoop()
+        if stealConnection then
+            stealConnection:Disconnect()
+        end
+        
+        stealConnection = RunService.Heartbeat:Connect(function()
+            if not autoStealEnabled then
+                return
+            end
+            
+            local topPets = get_top_3_pets()
+            
+            local targetAnimal = nil
+            if topPets[selectedTargetIndex] then
+                targetAnimal = topPets[selectedTargetIndex].animalData
+            end
+            
+            if not targetAnimal or isMyBaseAnimal(targetAnimal) then
+                return
+            end
+            
+            local prompt = PromptMemoryCache[targetAnimal.uid]
+            if not prompt or not prompt.Parent then
+                prompt = findProximityPromptForAnimal(targetAnimal)
+            end
+            
+            if prompt then
+                attemptSteal(prompt)
+            end
+        end)
+    end
+
+    local function progressBarUpdateLoop()
+        while task.wait(0.01) do
+            updateProgressBar()
+        end
+    end
+
+    -- Main initialization thread
+    task.spawn(function()
+        while not AnimalsData or not AnimalsShared or not NumberUtils do
+            task.wait(0.5)
+        end
+        
+        task.wait(2)
+        
+        createProgressBarGUI()
+        
+        local guiCreated = createMobileGUI()
+        if not guiCreated then
+            return
+        end
+        
+        task.spawn(progressBarUpdateLoop)
+        
+        if toggleButton then
+            local isMobile = UserInputService.TouchEnabled
+            
+            if not isMobile then
+                toggleButton.MouseEnter:Connect(function()
+                    toggleButton.BackgroundTransparency = 0.05
+                    if toggleButton:FindFirstChild("UIStroke") then
+                        toggleButton.UIStroke.Transparency = 0.3
+                    end
+                end)
+
+                toggleButton.MouseLeave:Connect(function()
+                    toggleButton.BackgroundTransparency = 0.15
+                    if toggleButton:FindFirstChild("UIStroke") then
+                        toggleButton.UIStroke.Transparency = 0.5
+                    end
+                end)
+            end
+
+            toggleButton.MouseButton1Click:Connect(function()
+                autoStealEnabled = not autoStealEnabled
+                
+                if autoStealEnabled then
+                    local topPets = get_top_3_pets()
+                    updateUI(true, topPets)
+                    autoStealLoop()
+                    
+                    if progressBarText then
+                        progressBarText.Text = ""
+                        progressBarFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+                    end
+                else
+                    updateUI(false)
+                    isCurrentlyStealing = false
+                    currentStealProgress = 0
+                    
+                    if progressBarText then
+                        progressBarText.Text = ""
+                        progressBarFill.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                        progressBarFill.Size = UDim2.new(0, 0, 1, -4)
+                    end
+                end
+            end)
+        end
+        
+        task.wait(1)
+        autoStealLoop()
+        
+        local topPets = get_top_3_pets()
+        updateUI(true, topPets)
+        
+        while task.wait(0.1) do
+            if autoStealEnabled then
+                local topPets = get_top_3_pets()
+                updateUI(true, topPets)
+            end
+        end
+    end)
+end
